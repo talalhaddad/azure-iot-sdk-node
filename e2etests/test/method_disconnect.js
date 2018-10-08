@@ -135,7 +135,7 @@ protocolAndTermination.forEach( function (testConfiguration) {
       serviceClient = serviceSdk.Client.fromConnectionString(hubConnectionString);
       deviceClient = createDeviceClient(testConfiguration.transport, provisionedDevice);
       secondMethodTimeout = null;
-      deviceClient.connect(beforeEachCallback)
+      deviceClient.open(beforeEachCallback);
     });
 
     afterEach(function (testCallback) {
