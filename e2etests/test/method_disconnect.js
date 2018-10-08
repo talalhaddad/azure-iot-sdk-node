@@ -131,10 +131,11 @@ protocolAndTermination.forEach( function (testConfiguration) {
       DeviceIdentityHelper.deleteDevice(provisionedDevice.deviceId, afterCallback);
     });
 
-    beforeEach(function () {
+    beforeEach(function (beforeEachCallback) {
       serviceClient = serviceSdk.Client.fromConnectionString(hubConnectionString);
       deviceClient = createDeviceClient(testConfiguration.transport, provisionedDevice);
       secondMethodTimeout = null;
+      deviceClient.connect(beforeEachCallback)
     });
 
     afterEach(function (testCallback) {
