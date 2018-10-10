@@ -12,7 +12,7 @@ var uuid = require('uuid');
 var assert = require('chai').assert;
 var debug = require('debug')('e2etests:devicemethod');
 
-var N = 10;
+var N = 1000;
 Array.apply(null, {length: N}).map(Number.call, Number).forEach(function() {
   [
     require('azure-iot-device-amqp').Amqp,
