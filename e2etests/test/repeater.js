@@ -148,7 +148,7 @@ Array.apply(null, {length: N}).map(Number.call, Number).forEach(function() {
                     debug('---------- end method test ------------');
                     done(err);
                   });
-        }, 3000);
+        }, 1000);
       };
 
       [null].forEach(function(testPayload) {
