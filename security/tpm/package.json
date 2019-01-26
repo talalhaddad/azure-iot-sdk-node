@@ -7,12 +7,12 @@
   "main": "index.js",
   "typings": "index.d.ts",
   "dependencies": {
+    "array-equal": "^1.0.0",
     "azure-iot-common": "1.9.1",
-    "debug": "^3.0.1",
     "base32-encode": "^1.0.0",
+    "debug": "^3.0.1",
     "machina": "^4.0.1",
-    "tss.js": "^0.0.3",
-    "array-equal": "^1.0.0"
+    "tss.js": "^1.1.0"
   },
   "devDependencies": {
     "@types/node": "^7.0.5",

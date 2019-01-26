@@ -264,20 +264,27 @@ export class TpmSecurityClient  {
     }
   }
 
-  private _createPersistentPrimary(name: string, hierarchy: TPM_HANDLE, handle: TPM_HANDLE, template: TPMT_PUBLIC, callback: (err: Error, resultPublicKey: TPMT_PUBLIC) => void): void {
-    this._tpm.allowErrors().ReadPublic(handle, (resp: tss.ReadPublicResponse) => {
-      let rc = this._tpm.getLastResponseCode();
+  private _createPersistentPrimary(name: string, hierarchy: TPM_HANDLE, handle: TPM_HANDLE, template: TPMT_PUBLIC, callback: (err: Error, resultPublicKey?: TPMT_PUBLIC) => void): void {
+    this._tpm.allowErrors().ReadPublic(handle, (err: tss.TpmError, resp: tss.ReadPublicResponse) => {
+      const rc = err ? err.responseCode : TPM_RC.SUCCESS;
       debug('ReadPublic(' + name + ') returned ' + TPM_RC[rc] +  (rc === TPM_RC.SUCCESS ? '; PUB: ' + resp.outPublic.toString() : ''));
       if (rc !== TPM_RC.SUCCESS) {
         /*Codes_SRS_NODE_TPM_SECURITY_CLIENT_06_017: [If the endorsement key does NOT exist, a new key will be created.] */
         /*Codes_SRS_NODE_TPM_SECURITY_CLIENT_06_018: [If the storage root key does NOT exist, a new key will be created.] */
-        this._tpm.withSession(tss.NullPwSession).CreatePrimary(hierarchy, new tss.TPMS_SENSITIVE_CREATE(), template, null, null, (resp: tss.CreatePrimaryResponse) => {
-          debug('CreatePrimary(' + name + ') returned ' + TPM_RC[this._tpm.getLastResponseCode()]);
-          this._tpm.withSession(tss.NullPwSession).EvictControl(tss.Owner, resp.handle, handle, () => {
-            debug('EvictControl(0x' + resp.handle.handle.toString(16) + ', 0x' + handle.handle.toString(16) + ') returned ' + TPM_RC[this._tpm.getLastResponseCode()]);
-            this._tpm.FlushContext(resp.handle, () => {
-              debug('FlushContext(TRANSIENT_' + name + ') returned ' + TPM_RC[this._tpm.getLastResponseCode()]);
-              callback(null, resp.outPublic);
+        this._tpm.withSession(tss.NullPwSession).CreatePrimary(hierarchy, new tss.TPMS_SENSITIVE_CREATE(), template, null, null, (err: tss.TpmError, resp: tss.CreatePrimaryResponse) => {
+          const rc = err ? err.responseCode : TPM_RC.SUCCESS;
+          debug('CreatePrimary(' + name + ') returned ' + TPM_RC[rc]);
+          this._tpm.withSession(tss.NullPwSession).EvictControl(tss.Owner, resp.handle, handle, (err) => {
+            const rc = err ? err.responseCode : TPM_RC.SUCCESS;
+            debug('EvictControl(0x' + resp.handle.handle.toString(16) + ', 0x' + handle.handle.toString(16) + ') returned ' + TPM_RC[rc]);
+            this._tpm.FlushContext(resp.handle, (err) => {
+              const rc = err ? err.responseCode : TPM_RC.SUCCESS;
+              debug('FlushContext(TRANSIENT_' + name + ') returned ' + TPM_RC[rc]);
+              if (rc === TPM_RC.SUCCESS) {
+                callback(null, resp.outPublic);
+              } else {
+                callback(err);
+              }
             });
           });
         });
@@ -288,8 +295,8 @@ export class TpmSecurityClient  {
   }
 
   private _readPersistentPrimary(name: string, handle: TPM_HANDLE, callback: (err: Error, resultPublicKey: TPMT_PUBLIC) => void): void {
-    this._tpm.allowErrors().ReadPublic(handle, (resp: tss.ReadPublicResponse) => {
-      let rc = this._tpm.getLastResponseCode();
+    this._tpm.allowErrors().ReadPublic(handle, (err: tss.TpmError, resp: tss.ReadPublicResponse) => {
+      const rc = err ? err.responseCode : TPM_RC.SUCCESS;
       debug('ReadPublic(' + name + ') returned ' + TPM_RC[rc] +  (rc === TPM_RC.SUCCESS ? '; PUB: ' + resp.outPublic.toString() : ''));
       if (rc !== TPM_RC.SUCCESS) {
         debug('readPersistentPrimary failed for: ' + name);
@@ -303,7 +310,9 @@ export class TpmSecurityClient  {
   private _getPropsAndHashAlg( callback: (algorithm: TPM_ALG_ID, properties: tss.TPML_TAGGED_TPM_PROPERTY) => void): void {
     const idKeyHashAlg: TPM_ALG_ID = (<tss.TPMS_SCHEME_HMAC>(<tss.TPMS_KEYEDHASH_PARMS>this._idKeyPub.parameters).scheme).hashAlg;
 
-    this._tpm.GetCapability(tss.TPM_CAP.TPM_PROPERTIES, TPM_PT.INPUT_BUFFER, 1, (caps: tss.GetCapabilityResponse) => {
+    this._tpm.GetCapability(tss.TPM_CAP.TPM_PROPERTIES, TPM_PT.INPUT_BUFFER, 1, (err: tss.TpmError, caps: tss.GetCapabilityResponse) => {
+      const rc = err ? err.responseCode : TPM_RC.SUCCESS;
+      debug('GetCapability returned: ' + TPM_RC[rc]);
       const props = <tss.TPML_TAGGED_TPM_PROPERTY>caps.capabilityData;
       callback(idKeyHashAlg, props);
     });
@@ -323,8 +332,14 @@ export class TpmSecurityClient  {
       } else {
         const maxInputBuffer: number = props.tpmProperty[0].value;
         if (dataToSign.length <= maxInputBuffer) {
-          this._tpm.withSession(tss.NullPwSession).HMAC(TpmSecurityClient._idKeyPersistentHandle, dataToSign, idKeyHashAlg, (signature: Buffer) => {
-            callback(null, signature);
+          this._tpm.withSession(tss.NullPwSession).HMAC(TpmSecurityClient._idKeyPersistentHandle, dataToSign, idKeyHashAlg, (err: tss.TpmError, signature: Buffer) => {
+            const rc = err ? err.responseCode : TPM_RC.SUCCESS;
+            debug('HMAC returned: ' + TPM_RC[rc]);
+            if (rc === TPM_RC.SUCCESS) {
+              callback(null, signature);
+            } else {
+              callback(err);
+            }
           });
         } else {
           let curPos: number = 0;
@@ -337,12 +352,20 @@ export class TpmSecurityClient  {
               curPos += maxInputBuffer;
               this._tpm.withSession(tss.NullPwSession).SequenceUpdate(hSequence, dataToSign.slice(sliceCurPos, sliceCurPos + maxInputBuffer), loopFn);
             } else {
-              this._tpm.withSession(tss.NullPwSession).SequenceComplete(hSequence, dataToSign.slice(curPos, curPos + bytesLeft), new TPM_HANDLE(tss.TPM_RH.NULL), (resp: tss.SequenceCompleteResponse) => {
-                callback(null, resp.result);
+              this._tpm.withSession(tss.NullPwSession).SequenceComplete(hSequence, dataToSign.slice(curPos, curPos + bytesLeft), new TPM_HANDLE(tss.TPM_RH.NULL), (err: tss.TpmError, resp: tss.SequenceCompleteResponse) => {
+                const rc = err ? err.responseCode : TPM_RC.SUCCESS;
+                debug('SequenceComplete returned: ' + TPM_RC[rc]);
+                if (rc === TPM_RC.SUCCESS) {
+                  callback(null, resp.result);
+                } else {
+                  callback(err);
+                }
               });
             }
           };
-          this._tpm.withSession(tss.NullPwSession).HMAC_Start(TpmSecurityClient._idKeyPersistentHandle, new Buffer(0), idKeyHashAlg, (hSeq: TPM_HANDLE) => {
+          this._tpm.withSession(tss.NullPwSession).HMAC_Start(TpmSecurityClient._idKeyPersistentHandle, new Buffer(0), idKeyHashAlg, (err: tss.TpmError, hSeq: TPM_HANDLE) => {
+            const rc = err ? err.responseCode : TPM_RC.SUCCESS;
+            debug('HMAC_Start returned: ' + TPM_RC[rc]);
             hSequence = hSeq;
             loopFn();
           });
@@ -353,7 +376,6 @@ export class TpmSecurityClient  {
 
   private _activateIdentityKey(activationBlob: Buffer, activateCallback: (err: Error) => void): void {
 
-    let currentPosition = 0;
     let credentialBlob: tss.TPMS_ID_OBJECT;
     let encodedSecret = new tss.TPM2B_ENCRYPTED_SECRET();
     let idKeyDupBlob = new TPM2B_PRIVATE();
@@ -362,27 +384,32 @@ export class TpmSecurityClient  {
     //
     // Un-marshal components of the activation blob received from the provisioning service.
     //
-    [credentialBlob, currentPosition] = tss.marshal.sizedFromTpm(tss.TPMS_ID_OBJECT, activationBlob, 2, currentPosition);
-    debug('credentialBlob end: ' + currentPosition);
-    currentPosition = encodedSecret.fromTpm(activationBlob, currentPosition);
-    debug('encodedSecret end: ' + currentPosition);
-    currentPosition = idKeyDupBlob.fromTpm(activationBlob, currentPosition);
-    debug('idKeyDupBlob end: ' + currentPosition);
-    currentPosition = encWrapKey.fromTpm(activationBlob, currentPosition);
-    debug('encWrapKey end: ' + currentPosition);
-    [this._idKeyPub, currentPosition] = tss.marshal.sizedFromTpm(TPMT_PUBLIC, activationBlob, 2, currentPosition);
-    debug('idKeyPub end: ' + currentPosition);
+    let buf: tss.TpmBuffer = activationBlob instanceof Buffer ? new tss.TpmBuffer(activationBlob) : activationBlob;
+
+    credentialBlob = buf.sizedFromTpm(tss.TPMS_ID_OBJECT, 2);
+    encodedSecret = buf.createFromTpm(tss.TPM2B_ENCRYPTED_SECRET);
+    idKeyDupBlob = buf.createFromTpm(tss.TPM2B_PRIVATE);
+    encWrapKey = buf.createFromTpm(tss.TPM2B_ENCRYPTED_SECRET);
+    this._idKeyPub = buf.sizedFromTpm(TPMT_PUBLIC, 2);
+    // This exists in the sample code but does not seem to have an equivalent here. (sample: https://github.com/Microsoft/TSS.MSR/blob/master/TSS.JS/test/Test_Azure_IoT_Provisioning.ts)
+    // this.encUriData = buf.createFromTpm(tss.TPM2B_DATA);
+
+    if (!buf.isOk())
+      return activateCallback(new errors.SecurityDeviceError('Could not unmarshal activation data'));
+
+    if (buf.curPos !== buf.length)
+      debug('WARNING: Activation Blob sent by DPS has contains extra unidentified data');
 
     //
     // Start a policy session to be used with ActivateCredential()
     //
-
-    this._tpm.GetRandom(TpmSecurityClient._tpmNonceSize, (nonce: Buffer) => {
-      this._tpm.StartAuthSession(null, null, nonce, null, tss.TPM_SE.POLICY, tss.NullSymDef, TPM_ALG_ID.SHA256, (resp: tss.StartAuthSessionResponse) => {
-        debug('StartAuthSession(POLICY_SESS) returned ' + TPM_RC[this._tpm.getLastResponseCode()] + '; sess handle: ' + resp.handle.handle.toString(16));
-        if (this._tpm.getLastResponseCode() !== TPM_RC.SUCCESS) {
+    this._tpm.GetRandom(TpmSecurityClient._tpmNonceSize, (err: tss.TpmError, nonce: Buffer) => {
+      this._tpm.StartAuthSession(null, null, nonce, null, tss.TPM_SE.POLICY, tss.NullSymDef, TPM_ALG_ID.SHA256, (err: tss.TpmError, resp: tss.StartAuthSessionResponse) => {
+        const rc = err ? err.responseCode : TPM_RC.SUCCESS;
+        debug('StartAuthSession(POLICY_SESS) returned ' + TPM_RC[rc] + '; sess handle: ' + resp.handle.handle.toString(16));
+        if (rc !== TPM_RC.SUCCESS) {
           /*Codes_SRS_NODE_TPM_SECURITY_CLIENT_06_016: [If an error is encountered activating the identity key, the callback with be invoked with an `Error` of `SecurityDeviceError`.] */
-          activateCallback(new errors.SecurityDeviceError('Authorization session unable to be created.  RC value: ' + TPM_RC[this._tpm.getLastResponseCode()].toString()));
+          activateCallback(new errors.SecurityDeviceError('Authorization session unable to be created.  RC value: ' + TPM_RC[rc].toString()));
         } else {
           let policySession = new tss.Session(resp.handle, resp.nonceTPM);
 
@@ -390,11 +417,12 @@ export class TpmSecurityClient  {
           // Apply the policy necessary to authorize an EK on Windows
           //
 
-          this._tpm.withSession(tss.NullPwSession).PolicySecret(tss.Endorsement, policySession.SessIn.sessionHandle, null, null, null, 0, (resp: tss.PolicySecretResponse) => {
-            debug('PolicySecret() returned ' + TPM_RC[this._tpm.getLastResponseCode()]);
-            if (this._tpm.getLastResponseCode() !== TPM_RC.SUCCESS) {
+          this._tpm.withSession(tss.NullPwSession).PolicySecret(tss.Endorsement, policySession.SessIn.sessionHandle, null, null, null, 0, (err: tss.TpmError, resp: tss.PolicySecretResponse) => {
+            const rc = err ? err.responseCode : TPM_RC.SUCCESS;
+            debug('PolicySecret() returned ' + TPM_RC[rc]);
+            if (rc !== TPM_RC.SUCCESS) {
               /*Codes_SRS_NODE_TPM_SECURITY_CLIENT_06_016: [If an error is encountered activating the identity key, the callback with be invoked with an `Error` of `SecurityDeviceError`.] */
-              activateCallback(new errors.SecurityDeviceError('Unable to apply the necessary policy to authorize the EK.  RC value: ' + TPM_RC[this._tpm.getLastResponseCode()].toString()));
+              activateCallback(new errors.SecurityDeviceError('Unable to apply the necessary policy to authorize the EK.  RC value: ' + TPM_RC[rc].toString()));
             } else {
 
               //
@@ -402,13 +430,13 @@ export class TpmSecurityClient  {
               // of the duplication blob of the new Device ID key generated by DRS.
               //
 
-              this._tpm.withSessions(tss.NullPwSession, policySession).ActivateCredential(TpmSecurityClient._srkPersistentHandle, TpmSecurityClient._ekPersistentHandle, credentialBlob, encodedSecret.secret, (innerWrapKey: Buffer) => {
-                debug('ActivateCredential() returned ' + TPM_RC[this._tpm.getLastResponseCode()] + '; innerWrapKey size ' + innerWrapKey.length);
-                if (this._tpm.getLastResponseCode() !== TPM_RC.SUCCESS) {
+              this._tpm.withSessions(tss.NullPwSession, policySession).ActivateCredential(TpmSecurityClient._srkPersistentHandle, TpmSecurityClient._ekPersistentHandle, credentialBlob, encodedSecret.secret, (err: tss.TpmError, innerWrapKey: Buffer) => {
+                const rc = err ? err.responseCode : TPM_RC.SUCCESS;
+                debug('ActivateCredential() returned ' + TPM_RC[rc] + '; innerWrapKey size ' + innerWrapKey.length);
+                if (rc !== TPM_RC.SUCCESS) {
                   /*Codes_SRS_NODE_TPM_SECURITY_CLIENT_06_016: [If an error is encountered activating the identity key, the callback with be invoked with an `Error` of `SecurityDeviceError`.] */
-                  activateCallback(new errors.SecurityDeviceError('Unable to decrypt the symmetric key used to protect duplication blob.  RC value: ' + TPM_RC[this._tpm.getLastResponseCode()].toString()));
+                  activateCallback(new errors.SecurityDeviceError('Unable to decrypt the symmetric key used to protect duplication blob.  RC value: ' + TPM_RC[rc].toString()));
                 } else {
-
                   //
                   // Initialize parameters of the symmetric key used by DRS
                   // Note that the client uses the key size chosen by DRS, but other parameters are fixed (an AES key in CFB mode).
@@ -419,22 +447,24 @@ export class TpmSecurityClient  {
                   // Import the new Device ID key issued by DRS to the device's TPM
                   //
 
-                  this._tpm.withSession(tss.NullPwSession).Import(TpmSecurityClient._srkPersistentHandle, innerWrapKey, this._idKeyPub, idKeyDupBlob, encWrapKey.secret, symDef, (idKeyPrivate: TPM2B_PRIVATE) => {
-                    debug('Import() returned ' + TPM_RC[this._tpm.getLastResponseCode()] + '; idKeyPrivate size ' + idKeyPrivate.buffer.length);
-                    if (this._tpm.getLastResponseCode() !== TPM_RC.SUCCESS) {
+                  this._tpm.withSession(tss.NullPwSession).Import(TpmSecurityClient._srkPersistentHandle, innerWrapKey, this._idKeyPub, idKeyDupBlob, encWrapKey.secret, symDef, (err: tss.TpmError, idKeyPrivate: TPM2B_PRIVATE) => {
+                    const rc = err ? err.responseCode : TPM_RC.SUCCESS;
+                    debug('Import() returned ' + TPM_RC[rc] + '; idKeyPrivate size ' + idKeyPrivate.buffer.length);
+                    if (rc !== TPM_RC.SUCCESS) {
                         /*Codes_SRS_NODE_TPM_SECURITY_CLIENT_06_016: [If an error is encountered activating the identity key, the callback with be invoked with an `Error` of `SecurityDeviceError`.] */
-                        activateCallback(new errors.SecurityDeviceError('Unable to import the device id key into the TPM.  RC value: ' + TPM_RC[this._tpm.getLastResponseCode()].toString()));
+                        activateCallback(new errors.SecurityDeviceError('Unable to import the device id key into the TPM.  RC value: ' + TPM_RC[rc].toString()));
                     } else {
 
                       //
                       // Load the imported key into the TPM
                       //
 
-                      this._tpm.withSession(tss.NullPwSession).Load(TpmSecurityClient._srkPersistentHandle, idKeyPrivate, this._idKeyPub, (hIdKey: TPM_HANDLE) => {
-                        debug('Load() returned ' + TPM_RC[this._tpm.getLastResponseCode()] + '; ID key handle: 0x' + hIdKey.handle.toString(16));
-                        if (this._tpm.getLastResponseCode() !== TPM_RC.SUCCESS) {
+                      this._tpm.withSession(tss.NullPwSession).Load(TpmSecurityClient._srkPersistentHandle, idKeyPrivate, this._idKeyPub, (err: tss.TpmError, hIdKey: TPM_HANDLE) => {
+                        const rc = err ? err.responseCode : TPM_RC.SUCCESS;
+                        debug('Load() returned ' + TPM_RC[rc] + '; ID key handle: 0x' + hIdKey.handle.toString(16));
+                        if (rc !== TPM_RC.SUCCESS) {
                           /*Codes_SRS_NODE_TPM_SECURITY_CLIENT_06_016: [If an error is encountered activating the identity key, the callback with be invoked with an `Error` of `SecurityDeviceError`.] */
-                          activateCallback(new errors.SecurityDeviceError('Unable to load the device id key into the TPM.  RC value: ' + TPM_RC[this._tpm.getLastResponseCode()].toString()));
+                          activateCallback(new errors.SecurityDeviceError('Unable to load the device id key into the TPM.  RC value: ' + TPM_RC[rc].toString()));
                         } else {
 
                           //
@@ -447,20 +477,22 @@ export class TpmSecurityClient  {
                             // Persist the new Device ID key
                             //
 
-                            this._tpm.withSession(tss.NullPwSession).EvictControl(tss.Owner, hIdKey, TpmSecurityClient._idKeyPersistentHandle, () => {
-                              if (this._tpm.getLastResponseCode() !== TPM_RC.SUCCESS) {
+                            this._tpm.withSession(tss.NullPwSession).EvictControl(tss.Owner, hIdKey, TpmSecurityClient._idKeyPersistentHandle, (err: tss.TpmError) => {
+                              const rc = err ? err.responseCode : TPM_RC.SUCCESS;
+                              if (rc !== TPM_RC.SUCCESS) {
                                 /*Codes_SRS_NODE_TPM_SECURITY_CLIENT_06_016: [If an error is encountered activating the identity key, the callback with be invoked with an `Error` of `SecurityDeviceError`.] */
-                                activateCallback(new errors.SecurityDeviceError('Unable to persist the device id key into the TPM.  RC value: ' + TPM_RC[this._tpm.getLastResponseCode()].toString()));
+                                activateCallback(new errors.SecurityDeviceError('Unable to persist the device id key into the TPM.  RC value: ' + TPM_RC[rc].toString()));
                               } else {
 
                                 //
                                 // Free the ID Key transient handle and the session object.  Doesn't matter if it "fails".  Go on at this point./
                                 //
 
-                                this._tpm.FlushContext(hIdKey, () => {
-                                  debug('FlushContext(TRANS_ID_KEY) returned ' + TPM_RC[this._tpm.getLastResponseCode()]);
+                                this._tpm.FlushContext(hIdKey, (err: tss.TpmError) => {
+                                  const rc = err ? err.responseCode : TPM_RC.SUCCESS;
+                                  debug('FlushContext(TRANS_ID_KEY) returned ' + TPM_RC[rc]);
                                   this._tpm.FlushContext(policySession.SessIn.sessionHandle, () => {
-                                    debug('FlushContext(POLICY_SESS) returned ' + TPM_RC[this._tpm.getLastResponseCode()]);
+                                    debug('FlushContext(POLICY_SESS) returned ' + TPM_RC[rc]);
                                     activateCallback(null);
                                   });
                                 });
